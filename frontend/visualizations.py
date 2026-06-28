@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib.gridspec import GridSpec
+from PIL import Image
 
 EMOTION_COLORS = {
     "Angry": "#e74c3c",
@@ -36,12 +37,14 @@ CHART_STYLE = {
 }
 
 
-def fig_to_base64(fig, dpi=120):
+def fig_to_base64(fig, dpi=72):
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     buffer.seek(0)
-    return base64.b64encode(buffer.read()).decode("ascii")
+    data = buffer.read()
+    buffer.close()
+    return base64.b64encode(data).decode("ascii")
 
 
 def compute_analysis(probabilities, emotions, predicted_idx):
@@ -116,7 +119,7 @@ def build_interpretation(predicted, runner_up, confidence, margin):
 
 def plot_probability_bars(emotions, probabilities, predicted_emotion):
   with plt.rc_context(CHART_STYLE):
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    fig, ax = plt.subplots(figsize=(7, 3.8))
     colors = [EMOTION_COLORS[e] for e in emotions]
     y_pos = np.arange(len(emotions))
     percents = probabilities * 100
@@ -142,7 +145,7 @@ def plot_probability_bars(emotions, probabilities, predicted_emotion):
 
 def plot_radar_chart(emotions, probabilities, predicted_emotion):
   with plt.rc_context(CHART_STYLE):
-    fig, ax = plt.subplots(figsize=(5.5, 5.5), subplot_kw=dict(polar=True))
+    fig, ax = plt.subplots(figsize=(4.5, 4.5), subplot_kw=dict(polar=True))
     angles = np.linspace(0, 2 * np.pi, len(emotions), endpoint=False)
     values = np.concatenate([probabilities, probabilities[:1]])
     angles = np.concatenate([angles, angles[:1]])
@@ -257,23 +260,52 @@ def plot_gradcam_panel(original_rgb, gray_face, heatmap, overlay, predicted_emot
     return fig_to_base64(fig, dpi=130)
 
 
-def generate_all_charts(emotions, probabilities, predicted_emotion, original_rgb, gray_face, heatmap, overlay, dpi=100):
-    from concurrent.futures import ThreadPoolExecutor
+def make_light_gradcam_panel(original_rgb, gray_face, heatmap_norm, overlay, tile=128):
+    """Four-panel strip using OpenCV (no matplotlib) — low RAM."""
+
+    def _to_uint8_rgb(arr):
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 1)
+            if arr.max() <= 1:
+                arr = (arr * 255).astype(np.uint8)
+        if arr.ndim == 2:
+            arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+        elif arr.shape[2] == 3:
+            pass
+        return cv2.resize(arr, (tile, tile), interpolation=cv2.INTER_AREA)
+
+    def _heatmap_rgb(hm):
+        hm_u8 = (np.clip(hm, 0, 1) * 255).astype(np.uint8)
+        hm_u8 = cv2.resize(hm_u8, (tile, tile), interpolation=cv2.INTER_AREA)
+        colored = cv2.applyColorMap(hm_u8, cv2.COLORMAP_JET)
+        return cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
+
+    row = np.hstack([
+        _to_uint8_rgb(original_rgb),
+        _to_uint8_rgb(gray_face),
+        _heatmap_rgb(heatmap_norm),
+        _to_uint8_rgb(overlay),
+    ])
+    buffer = io.BytesIO()
+    Image.fromarray(row).save(buffer, format="PNG", optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def generate_all_charts(
+    emotions, probabilities, predicted_emotion, original_rgb, gray_face, heatmap, overlay, low_memory=True
+):
+    import gc
 
     probs = np.asarray(probabilities, dtype=np.float64)
     conf = float(probs[emotions.index(predicted_emotion)])
+    dpi = 72 if low_memory else 100
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        f_prob = pool.submit(plot_probability_bars, emotions, probs, predicted_emotion)
-        f_radar = pool.submit(plot_radar_chart, emotions, probs, predicted_emotion)
-        f_donut = pool.submit(plot_donut_chart, emotions, probs, predicted_emotion)
-        f_gauge = pool.submit(plot_confidence_gauge, conf)
-        f_panel = pool.submit(plot_gradcam_panel, original_rgb, gray_face, heatmap, overlay, predicted_emotion)
-
-    return {
-        "probability_chart": f_prob.result(),
-        "radar_chart": f_radar.result(),
-        "donut_chart": f_donut.result(),
-        "confidence_gauge": f_gauge.result(),
-        "gradcam_panel": f_panel.result(),
+    charts = {
+        "probability_chart": plot_probability_bars(emotions, probs, predicted_emotion),
+        "radar_chart": plot_radar_chart(emotions, probs, predicted_emotion),
+        "donut_chart": plot_donut_chart(emotions, probs, predicted_emotion),
+        "confidence_gauge": plot_confidence_gauge(conf),
     }
+    plt.close("all")
+    gc.collect()
+    return charts

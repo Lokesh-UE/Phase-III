@@ -1,5 +1,15 @@
 """Inference helpers for the FER web frontend."""
 
+import gc
+import os
+
+# Limit TensorFlow / BLAS threads before import (keeps RAM low on 512MB hosts)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import base64
 import io
 import time
@@ -8,14 +18,17 @@ from pathlib import Path
 import cv2
 import matplotlib.cm as cm
 import numpy as np
-import tensorflow as tf
 from PIL import Image
+
+import tensorflow as tf
 from tensorflow import keras
 
-from visualizations import compute_analysis, generate_all_charts
+from visualizations import compute_analysis, generate_all_charts, make_light_gradcam_panel
 
 IMG_SIZE = 48
-DISPLAY_MAX = 320
+DISPLAY_MAX = 280
+MAX_IMAGE_SIDE = 640
+LOW_MEMORY = os.environ.get("FER_LOW_MEMORY", "1") == "1"
 # Only show a definitive label when these quality gates pass (reduces wrong detections)
 MIN_CONFIDENCE = 0.55
 MIN_MARGIN = 0.12
@@ -42,6 +55,16 @@ MODEL_CANDIDATES = [
 
 _model = None
 _face_cascade = None
+_tf_configured = False
+
+
+def _configure_tensorflow():
+    global _tf_configured
+    if _tf_configured:
+        return
+    tf.config.threading.set_inter_op_parallelism_threads(1)
+    tf.config.threading.set_intra_op_parallelism_threads(1)
+    _tf_configured = True
 
 
 def find_model_path():
@@ -56,6 +79,7 @@ def load_model():
     if _model is not None:
         return _model
 
+    _configure_tensorflow()
     model_path = find_model_path()
     if model_path is None:
         raise FileNotFoundError(
@@ -80,13 +104,22 @@ def pil_to_rgb(image):
             image = image.convert("RGB")
         elif image.mode == "L":
             image = image.convert("RGB")
-        return np.array(image)
-    arr = np.asarray(image)
-    if arr.dtype != np.uint8:
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    if len(arr.shape) == 2:
-        return cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
-    return cv2.cvtColor(arr, cv2.COLOR_BGR2RGB) if arr.shape[2] == 3 else arr
+        rgb = np.array(image)
+    else:
+        arr = np.asarray(image)
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        if len(arr.shape) == 2:
+            rgb = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+        else:
+            rgb = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB) if arr.shape[2] == 3 else arr
+
+    height, width = rgb.shape[:2]
+    if max(height, width) > MAX_IMAGE_SIDE:
+        scale = MAX_IMAGE_SIDE / max(height, width)
+        new_size = (int(width * scale), int(height * scale))
+        rgb = cv2.resize(rgb, new_size, interpolation=cv2.INTER_AREA)
+    return rgb
 
 
 def resize_for_display(rgb_image, max_side=DISPLAY_MAX):
@@ -197,7 +230,9 @@ def make_gradcam_heatmap(img_array, model, pred_index):
     heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-    return heatmap.numpy()
+    result = heatmap.numpy()
+    del heatmap, grads, pooled_grads, conv_outputs, img_tensor
+    return result
 
 
 def overlay_gradcam(gray_face, heatmap):
@@ -220,18 +255,19 @@ def array_to_base64(image_array, cmap=None):
                 arr = (arr * 255).astype(np.uint8)
         pil_image = Image.fromarray(arr)
     buffer = io.BytesIO()
-    pil_image.save(buffer, format="PNG")
+    pil_image.save(buffer, format="PNG", optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def predict_probabilities(model, batch, accuracy_mode=False):
-    """Single forward pass, or TTA average for higher accuracy."""
-    pred = model.predict(batch, verbose=0)[0]
+    """Forward pass (or TTA average). Uses __call__ instead of predict to save RAM."""
+    pred = model(batch, training=False).numpy()[0]
     if not accuracy_mode:
         return pred
 
     flipped = np.flip(batch, axis=2)
-    pred_flip = model.predict(flipped, verbose=0)[0]
+    pred_flip = model(flipped, training=False).numpy()[0]
+    del flipped
     return (pred + pred_flip) / 2.0
 
 
@@ -310,6 +346,7 @@ def predict_emotion(image, use_face_detection=True, accuracy_mode=False, include
                 overlay, heatmap_norm = overlay_gradcam(gray_face, heatmap)
                 gradcam_b64 = array_to_base64(overlay)
                 heatmap_b64 = array_to_base64(heatmap_norm)
+                del heatmap
                 try:
                     charts = generate_all_charts(
                         EMOTIONS,
@@ -319,13 +356,19 @@ def predict_emotion(image, use_face_detection=True, accuracy_mode=False, include
                         gray_face,
                         heatmap_norm,
                         overlay,
+                        low_memory=LOW_MEMORY,
+                    )
+                    charts["gradcam_panel"] = make_light_gradcam_panel(
+                        annotated_rgb, gray_face, heatmap_norm, overlay
                     )
                 except Exception as chart_exc:
                     chart_error = str(chart_exc)
+                del overlay, heatmap_norm
         except Exception as gradcam_exc:
             chart_error = str(gradcam_exc)
 
     processing_ms = round((time.perf_counter() - t0) * 1000)
+    gc.collect()
 
     return {
         "emotion": predicted_emotion,

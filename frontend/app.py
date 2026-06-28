@@ -10,7 +10,7 @@ from PIL import Image, UnidentifiedImageError
 from inference import find_model_path, load_model, predict_emotion
 from pdf_report import generate_pdf_report
 
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB
 
@@ -119,8 +119,7 @@ def pick_port(preferred=5000, max_tries=10):
 
 if __name__ == "__main__":
     if find_model_path():
-        load_model()
-        print(f"Model loaded from: {find_model_path()}")
+        print(f"Model file found: {find_model_path()} (loaded on first request)")
     else:
         print("WARNING: Model not found. Add CustomCNN_best.keras to demo/ or checkpoints/.")
 

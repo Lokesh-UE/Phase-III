@@ -8,3 +8,15 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: FER_LOW_MEMORY
+        value: "1"
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MPLBACKEND
+        value: Agg
