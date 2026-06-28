@@ -257,12 +257,23 @@ def plot_gradcam_panel(original_rgb, gray_face, heatmap, overlay, predicted_emot
     return fig_to_base64(fig, dpi=130)
 
 
-def generate_all_charts(emotions, probabilities, predicted_emotion, original_rgb, gray_face, heatmap, overlay):
-  probs = np.asarray(probabilities, dtype=np.float64)
-  return {
-    "probability_chart": plot_probability_bars(emotions, probs, predicted_emotion),
-    "radar_chart": plot_radar_chart(emotions, probs, predicted_emotion),
-    "donut_chart": plot_donut_chart(emotions, probs, predicted_emotion),
-    "confidence_gauge": plot_confidence_gauge(float(probs[emotions.index(predicted_emotion)])),
-    "gradcam_panel": plot_gradcam_panel(original_rgb, gray_face, heatmap, overlay, predicted_emotion),
-  }
+def generate_all_charts(emotions, probabilities, predicted_emotion, original_rgb, gray_face, heatmap, overlay, dpi=100):
+    from concurrent.futures import ThreadPoolExecutor
+
+    probs = np.asarray(probabilities, dtype=np.float64)
+    conf = float(probs[emotions.index(predicted_emotion)])
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        f_prob = pool.submit(plot_probability_bars, emotions, probs, predicted_emotion)
+        f_radar = pool.submit(plot_radar_chart, emotions, probs, predicted_emotion)
+        f_donut = pool.submit(plot_donut_chart, emotions, probs, predicted_emotion)
+        f_gauge = pool.submit(plot_confidence_gauge, conf)
+        f_panel = pool.submit(plot_gradcam_panel, original_rgb, gray_face, heatmap, overlay, predicted_emotion)
+
+    return {
+        "probability_chart": f_prob.result(),
+        "radar_chart": f_radar.result(),
+        "donut_chart": f_donut.result(),
+        "confidence_gauge": f_gauge.result(),
+        "gradcam_panel": f_panel.result(),
+    }

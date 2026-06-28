@@ -2,6 +2,7 @@
 
 import base64
 import io
+import time
 from pathlib import Path
 
 import cv2
@@ -15,6 +16,10 @@ from visualizations import compute_analysis, generate_all_charts
 
 IMG_SIZE = 48
 DISPLAY_MAX = 320
+# Only show a definitive label when these quality gates pass (reduces wrong detections)
+MIN_CONFIDENCE = 0.55
+MIN_MARGIN = 0.12
+MIN_FACE_SIZE = 40
 EMOTIONS = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
 EMOTION_EMOJI = {
     "Angry": "😠",
@@ -97,13 +102,14 @@ def detect_face(rgb_image):
     bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     faces = get_face_cascade().detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        gray, scaleFactor=1.08, minNeighbors=6, minSize=(MIN_FACE_SIZE, MIN_FACE_SIZE)
     )
     if len(faces) == 0:
-        return None, None
+        return None, None, 0.0
 
     x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
-    pad = int(0.15 * max(w, h))
+    face_quality = min(1.0, (w * h) / (gray.shape[0] * gray.shape[1]) * 8)
+    pad = int(0.12 * max(w, h))
     height, width = gray.shape
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
@@ -111,7 +117,7 @@ def detect_face(rgb_image):
     y2 = min(height, y + h + pad)
     bbox = (x1, y1, x2, y2)
     face_gray = gray[y1:y2, x1:x2]
-    return face_gray, bbox
+    return face_gray, bbox, face_quality
 
 
 def draw_face_box(rgb_image, bbox):
@@ -137,7 +143,11 @@ def preprocess_face(gray_face):
 def preprocess_upload(image, use_face_detection=True):
     rgb = pil_to_rgb(image)
     display_rgb = resize_for_display(rgb)
-    face_gray, bbox = detect_face(rgb) if use_face_detection else (None, None)
+    face_quality = 0.0
+    if use_face_detection:
+        face_gray, bbox, face_quality = detect_face(rgb)
+    else:
+        face_gray, bbox = None, None
 
     if face_gray is None:
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
@@ -149,7 +159,7 @@ def preprocess_upload(image, use_face_detection=True):
         annotated = draw_face_box(display_rgb, _scale_bbox(bbox, rgb.shape, display_rgb.shape))
 
     batch, normalized = preprocess_face(gray)
-    return batch, normalized, face_detected, annotated, display_rgb
+    return batch, normalized, face_detected, annotated, display_rgb, face_quality
 
 
 def _scale_bbox(bbox, src_shape, dst_shape):
@@ -214,17 +224,29 @@ def array_to_base64(image_array, cmap=None):
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def predict_emotion(image, use_face_detection=True):
-    model = load_model()
-    batch, gray_face, face_detected, annotated_rgb, _ = preprocess_upload(
-        image, use_face_detection
+def predict_probabilities(model, batch, accuracy_mode=False):
+    """Single forward pass, or TTA average for higher accuracy."""
+    pred = model.predict(batch, verbose=0)[0]
+    if not accuracy_mode:
+        return pred
+
+    flipped = np.flip(batch, axis=2)
+    pred_flip = model.predict(flipped, verbose=0)[0]
+    return (pred + pred_flip) / 2.0
+
+
+def assess_reliability(face_detected, confidence, margin, face_quality, accuracy_mode):
+    threshold_conf = MIN_CONFIDENCE + (0.05 if accuracy_mode else 0.0)
+    threshold_margin = MIN_MARGIN + (0.03 if accuracy_mode else 0.0)
+    return bool(
+        face_detected
+        and confidence >= threshold_conf
+        and margin >= threshold_margin
+        and face_quality >= 0.02
     )
 
-    probabilities = model.predict(batch, verbose=0)[0]
-    predicted_idx = int(np.argmax(probabilities))
-    predicted_emotion = EMOTIONS[predicted_idx]
-    confidence = float(probabilities[predicted_idx])
 
+def build_scores(probabilities):
     scores = [
         {
             "emotion": emotion,
@@ -239,48 +261,91 @@ def predict_emotion(image, use_face_detection=True):
         for emotion, prob in zip(EMOTIONS, probabilities)
     ]
     scores.sort(key=lambda item: item["probability"], reverse=True)
+    return scores
 
+
+def predict_emotion(image, use_face_detection=True, accuracy_mode=False, include_charts=True):
+    t0 = time.perf_counter()
+    model = load_model()
+    batch, gray_face, face_detected, annotated_rgb, _, face_quality = preprocess_upload(
+        image, use_face_detection
+    )
+
+    probabilities = predict_probabilities(model, batch, accuracy_mode=accuracy_mode)
+    predicted_idx = int(np.argmax(probabilities))
+    raw_emotion = EMOTIONS[predicted_idx]
+    confidence = float(probabilities[predicted_idx])
+    second_idx = int(np.argsort(probabilities)[-2])
+    margin = confidence - float(probabilities[second_idx])
+
+    scores = build_scores(probabilities)
     analysis = compute_analysis(probabilities, EMOTIONS, predicted_idx)
+    is_reliable = assess_reliability(face_detected, confidence, margin, face_quality, accuracy_mode)
+
+    if is_reliable:
+        predicted_emotion = raw_emotion
+        emoji = EMOTION_EMOJI[raw_emotion]
+        reliability_note = "High-confidence identification — result is reliable."
+    else:
+        predicted_emotion = "Uncertain"
+        emoji = "❓"
+        reliability_note = (
+            "Could not confirm expression with high confidence. "
+            "Upload a clear, frontal, well-lit face photo to avoid wrong detection."
+        )
+        analysis["interpretation"] = reliability_note
+        analysis["certainty"] = "Low"
+        analysis["certainty_note"] = reliability_note
 
     gradcam_b64 = None
     heatmap_b64 = None
     charts = {}
     chart_error = None
+    gradcam_idx = predicted_idx if is_reliable else int(np.argmax(probabilities))
 
-    try:
-        heatmap = make_gradcam_heatmap(batch, model, predicted_idx)
-        if heatmap is not None:
-            overlay, heatmap_norm = overlay_gradcam(gray_face, heatmap)
-            gradcam_b64 = array_to_base64(overlay)
-            heatmap_b64 = array_to_base64(heatmap_norm)
-            try:
-                charts = generate_all_charts(
-                    EMOTIONS,
-                    probabilities,
-                    predicted_emotion,
-                    annotated_rgb,
-                    gray_face,
-                    heatmap_norm,
-                    overlay,
-                )
-            except Exception as chart_exc:
-                chart_error = str(chart_exc)
-    except Exception as gradcam_exc:
-        chart_error = str(gradcam_exc)
+    if include_charts:
+        try:
+            heatmap = make_gradcam_heatmap(batch, model, gradcam_idx)
+            if heatmap is not None:
+                overlay, heatmap_norm = overlay_gradcam(gray_face, heatmap)
+                gradcam_b64 = array_to_base64(overlay)
+                heatmap_b64 = array_to_base64(heatmap_norm)
+                try:
+                    charts = generate_all_charts(
+                        EMOTIONS,
+                        probabilities,
+                        raw_emotion,
+                        annotated_rgb,
+                        gray_face,
+                        heatmap_norm,
+                        overlay,
+                    )
+                except Exception as chart_exc:
+                    chart_error = str(chart_exc)
+        except Exception as gradcam_exc:
+            chart_error = str(gradcam_exc)
+
+    processing_ms = round((time.perf_counter() - t0) * 1000)
 
     return {
         "emotion": predicted_emotion,
-        "emoji": EMOTION_EMOJI[predicted_emotion],
+        "raw_emotion": raw_emotion,
+        "emoji": emoji,
         "confidence": confidence,
         "confidence_percent": round(confidence * 100, 1),
+        "is_reliable": is_reliable,
+        "reliability_note": reliability_note,
         "scores": scores,
         "analysis": analysis,
         "face_detected": face_detected,
+        "face_quality": round(face_quality, 3),
         "annotated_image": array_to_base64(annotated_rgb),
         "preprocessed_image": array_to_base64(gray_face, cmap="gray"),
         "gradcam_image": gradcam_b64,
         "heatmap_image": heatmap_b64,
         "charts": charts,
         "chart_error": chart_error,
+        "processing_ms": processing_ms,
+        "accuracy_mode": accuracy_mode,
         "model_loaded": True,
     }

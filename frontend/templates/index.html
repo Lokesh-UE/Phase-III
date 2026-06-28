@@ -47,12 +47,21 @@
 
         <label class="checkbox-row">
           <input id="faceDetection" type="checkbox" checked>
-          Auto-detect face (recommended)
+          Auto-detect face (required for reliable results)
+        </label>
+
+        <label class="checkbox-row">
+          <input id="accuracyMode" type="checkbox" checked>
+          High-accuracy mode (test-time augmentation — slightly slower)
         </label>
 
         <button id="predictBtn" class="btn primary" {% if not model_ready %}disabled{% endif %}>
           Run full analysis
         </button>
+        <button id="downloadPdfBtn" class="btn secondary hidden" type="button">
+          Download PDF report
+        </button>
+        <p id="timingText" class="muted hidden"></p>
         <p id="errorMsg" class="error hidden"></p>
       </section>
 
@@ -74,6 +83,7 @@
           </div>
 
           <p id="faceNotice" class="face-notice hidden"></p>
+          <p id="reliabilityBanner" class="reliability-banner hidden"></p>
           <p id="interpretationText" class="interpretation"></p>
 
           <div class="metrics-grid" id="metricsGrid"></div>

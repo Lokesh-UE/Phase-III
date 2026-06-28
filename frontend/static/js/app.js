@@ -4,8 +4,11 @@ const dropzone = $("dropzone");
 const fileInput = $("fileInput");
 const previewImage = $("previewImage");
 const predictBtn = $("predictBtn");
+const downloadPdfBtn = $("downloadPdfBtn");
 const faceDetection = $("faceDetection");
+const accuracyMode = $("accuracyMode");
 const errorMsg = $("errorMsg");
+const timingText = $("timingText");
 const loadingOverlay = $("loadingOverlay");
 
 const emptyState = $("emptyState");
@@ -17,6 +20,7 @@ const predictionText = $("predictionText");
 const confidenceText = $("confidenceText");
 const certaintyBadge = $("certaintyBadge");
 const faceNotice = $("faceNotice");
+const reliabilityBanner = $("reliabilityBanner");
 const interpretationText = $("interpretationText");
 const metricsGrid = $("metricsGrid");
 const scoreBars = $("scoreBars");
@@ -36,6 +40,7 @@ const confidenceGauge = $("confidenceGauge");
 const API_BASE = (window.FER_API_URL || "").replace(/\/$/, "");
 
 let selectedFile = null;
+let lastResult = null;
 
 function show(el) {
   if (el) el.classList.remove("hidden");
@@ -222,6 +227,103 @@ function setCertaintyBadge(level, note) {
   certaintyBadge.title = note || "";
 }
 
+function renderResult(data) {
+  lastResult = data;
+  hide(emptyState);
+  show(resultsContent);
+  show(analysisSection);
+  if (downloadPdfBtn) show(downloadPdfBtn);
+
+  if (predictionEmoji) predictionEmoji.textContent = data.emoji || "😐";
+  if (predictionText) predictionText.textContent = data.emotion || "Unknown";
+  if (confidenceText) {
+    const raw = data.raw_emotion && data.raw_emotion !== data.emotion
+      ? ` (best match: ${data.raw_emotion})`
+      : "";
+    confidenceText.textContent = `${data.confidence_percent ?? 0}% confidence${raw}`;
+  }
+
+  if (timingText) {
+    timingText.textContent = data.processing_ms
+      ? `Analysis completed in ${data.processing_ms} ms`
+      : "";
+    show(timingText);
+  }
+
+  const analysis = data.analysis || defaultAnalysis(data);
+  setCertaintyBadge(analysis.certainty || "Medium", analysis.certainty_note || "");
+  if (interpretationText) interpretationText.textContent = data.reliability_note || analysis.interpretation || "";
+
+  if (reliabilityBanner) {
+    reliabilityBanner.textContent = data.is_reliable
+      ? "Verified: high-confidence identification passed quality checks."
+      : (data.reliability_note || "Low confidence — upload a clearer face photo.");
+    reliabilityBanner.className = `reliability-banner ${data.is_reliable ? "reliable" : "unreliable"}`;
+    show(reliabilityBanner);
+  }
+
+  if (faceNotice) {
+    faceNotice.textContent = data.face_detected
+      ? "Face detected and cropped automatically."
+      : "No face detected — enable face detection and upload a clear frontal face.";
+    show(faceNotice);
+  }
+
+  renderMetrics(analysis);
+  renderScores(data.scores || [], data.raw_emotion || data.emotion);
+  renderTop3(analysis.top3 || []);
+
+  setImageSrc(annotatedImage, data.annotated_image);
+  setImageSrc(preprocessedImage, data.preprocessed_image);
+  setImageSrc(heatmapImage, data.heatmap_image);
+  setImageSrc(gradcamImage, data.gradcam_image);
+
+  const charts = data.charts || {};
+  setImageSrc(gradcamPanel, charts.gradcam_panel);
+  setImageSrc(probabilityChart, charts.probability_chart);
+  setImageSrc(radarChart, charts.radar_chart);
+  setImageSrc(donutChart, charts.donut_chart);
+  setImageSrc(confidenceGauge, charts.confidence_gauge);
+
+  if (data.chart_error) showError(`Charts warning: ${data.chart_error}`);
+
+  if (analysisSection && (Object.keys(charts).length > 0 || data.gradcam_image)) {
+    show(analysisSection);
+    analysisSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+async function downloadPdfReport() {
+  if (!lastResult) {
+    showError("Run analysis first before downloading the PDF.");
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/download-pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lastResult),
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || "PDF download failed.");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "facial_expression_report.pdf";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+if (downloadPdfBtn) {
+  downloadPdfBtn.addEventListener("click", downloadPdfReport);
+}
+
 if (predictBtn) {
   predictBtn.addEventListener("click", async () => {
     if (!selectedFile) {
@@ -235,6 +337,7 @@ if (predictBtn) {
     const formData = new FormData();
     formData.append("image", selectedFile);
     formData.append("face_detection", faceDetection?.checked ? "true" : "false");
+    formData.append("accuracy_mode", accuracyMode?.checked ? "true" : "false");
 
     try {
       const response = await fetch(`${API_BASE}/predict`, {
@@ -243,52 +346,7 @@ if (predictBtn) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Prediction failed.");
-
-      hide(emptyState);
-      show(resultsContent);
-      show(analysisSection);
-
-      if (predictionEmoji) predictionEmoji.textContent = data.emoji || "😐";
-      if (predictionText) predictionText.textContent = data.emotion || "Unknown";
-      if (confidenceText) {
-        confidenceText.textContent = `${data.confidence_percent ?? 0}% confidence`;
-      }
-
-      const analysis = data.analysis || defaultAnalysis(data);
-      setCertaintyBadge(analysis.certainty || "Medium", analysis.certainty_note || "");
-      if (interpretationText) interpretationText.textContent = analysis.interpretation || "";
-
-      if (faceNotice) {
-        faceNotice.textContent = data.face_detected
-          ? "Face detected and cropped automatically."
-          : "No face detected — used the full image. Upload a clear frontal face for best results.";
-        show(faceNotice);
-      }
-
-      renderMetrics(analysis);
-      renderScores(data.scores || [], data.emotion);
-      renderTop3(analysis.top3 || []);
-
-      setImageSrc(annotatedImage, data.annotated_image);
-      setImageSrc(preprocessedImage, data.preprocessed_image);
-      setImageSrc(heatmapImage, data.heatmap_image);
-      setImageSrc(gradcamImage, data.gradcam_image);
-
-      const charts = data.charts || {};
-      setImageSrc(gradcamPanel, charts.gradcam_panel);
-      setImageSrc(probabilityChart, charts.probability_chart);
-      setImageSrc(radarChart, charts.radar_chart);
-      setImageSrc(donutChart, charts.donut_chart);
-      setImageSrc(confidenceGauge, charts.confidence_gauge);
-
-      if (data.chart_error) {
-        showError(`Charts warning: ${data.chart_error}`);
-      }
-
-      if (analysisSection && (Object.keys(charts).length > 0 || data.gradcam_image)) {
-        show(analysisSection);
-        analysisSection.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      renderResult(data);
     } catch (error) {
       showError(error.message || "Something went wrong. Is the server running?");
     } finally {
@@ -300,3 +358,45 @@ if (predictBtn) {
 if (predictBtn?.disabled) {
   predictBtn.setAttribute("data-model-missing", "true");
 }
+
+async function checkApiHealth() {
+  const statusPill = $("statusPill");
+  const apiAlert = $("apiAlert");
+  if (!API_BASE) {
+    if (statusPill) {
+      statusPill.textContent = "API URL missing";
+      statusPill.className = "status-pill missing";
+    }
+    show(apiAlert);
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/health`, { method: "GET" });
+    const data = await response.json();
+    if (!response.ok || data.status !== "ok") throw new Error("unhealthy");
+
+    if (statusPill) {
+      statusPill.textContent = data.model_ready ? "API ready" : "API online (no model)";
+      statusPill.className = `status-pill ${data.model_ready ? "ready" : "missing"}`;
+    }
+    hide(apiAlert);
+
+    if (predictBtn && data.model_ready) {
+      predictBtn.disabled = false;
+      predictBtn.removeAttribute("data-model-missing");
+    }
+  } catch {
+    if (statusPill) {
+      statusPill.textContent = "API offline";
+      statusPill.className = "status-pill missing";
+    }
+    show(apiAlert);
+    if (predictBtn) {
+      predictBtn.disabled = true;
+      predictBtn.setAttribute("data-model-missing", "true");
+    }
+  }
+}
+
+checkApiHealth();

@@ -1,30 +1,31 @@
 """Flask web app for facial expression recognition."""
 
+import io
 import os
 import socket
-from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from PIL import Image, UnidentifiedImageError
 
 from inference import find_model_path, load_model, predict_emotion
+from pdf_report import generate_pdf_report
 
-APP_VERSION = "2.0"
+APP_VERSION = "3.0"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB
 
 
 @app.after_request
 def add_cors_headers(response):
-    """Allow GitHub Pages frontend to call this API."""
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
     return response
 
 
 @app.route("/predict", methods=["OPTIONS"])
-def predict_preflight():
+@app.route("/download-pdf", methods=["OPTIONS"])
+def cors_preflight():
     return "", 204
 
 
@@ -51,21 +52,32 @@ def health():
     )
 
 
-@app.route("/predict", methods=["POST"])
-def predict():
+def _parse_image_upload():
     if "image" not in request.files:
-        return jsonify({"error": "No image uploaded."}), 400
-
+        return None, jsonify({"error": "No image uploaded."}), 400
     file = request.files["image"]
     if not file.filename:
-        return jsonify({"error": "Empty filename."}), 400
+        return None, jsonify({"error": "Empty filename."}), 400
+    image = Image.open(file.stream)
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    return image, None, None
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    image, err_resp, err_code = _parse_image_upload()
+    if err_resp:
+        return err_resp, err_code
 
     try:
-        image = Image.open(file.stream)
-        if image.mode not in ("RGB", "L"):
-            image = image.convert("RGB")
         use_face_detection = request.form.get("face_detection", "true").lower() != "false"
-        result = predict_emotion(image, use_face_detection=use_face_detection)
+        accuracy_mode = request.form.get("accuracy_mode", "false").lower() == "true"
+        result = predict_emotion(
+            image,
+            use_face_detection=use_face_detection,
+            accuracy_mode=accuracy_mode,
+        )
         result["api_version"] = APP_VERSION
         return jsonify(result)
     except UnidentifiedImageError:
@@ -74,6 +86,23 @@ def predict():
         return jsonify({"error": str(exc), "model_loaded": False}), 503
     except Exception as exc:
         return jsonify({"error": f"Prediction failed: {exc}"}), 500
+
+
+@app.route("/download-pdf", methods=["POST"])
+def download_pdf():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No report data. Run analysis first."}), 400
+    try:
+        pdf_bytes = generate_pdf_report(data)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="facial_expression_report.pdf",
+        )
+    except Exception as exc:
+        return jsonify({"error": f"PDF generation failed: {exc}"}), 500
 
 
 def pick_port(preferred=5000, max_tries=10):
@@ -97,10 +126,5 @@ if __name__ == "__main__":
 
     preferred = int(os.environ.get("PORT", 5000))
     port = pick_port(preferred)
-    if port != preferred:
-        print(f"Port {preferred} is busy (old server still running?). Using http://127.0.0.1:{port}")
-        print("Tip: stop the old server with Ctrl+C in its terminal, then restart.")
-    else:
-        print(f"Open http://127.0.0.1:{port}")
-
+    print(f"Open http://127.0.0.1:{port}")
     app.run(host="0.0.0.0", port=port, debug=False)

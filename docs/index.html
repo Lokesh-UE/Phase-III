@@ -13,18 +13,17 @@
   <div class="page">
     <header class="header">
       <div class="brand">
-        <span class="brand-icon">🎭</span>
+        <span class="brand-icon">&#127917;</span>
         <div>
           <h1>Facial Expression Recognition</h1>
-          <p>Custom CNN · FER2013 · Grad-CAM interpretability</p>
+          <p>Custom CNN &middot; FER2013 &middot; Grad-CAM interpretability</p>
         </div>
       </div>
-      <div id="statusPill" class="status-pill">Checking API…</div>
+      <div id="statusPill" class="status-pill">Checking API...</div>
     </header>
 
     <section id="apiAlert" class="alert hidden">
-      Set your API URL in <code>docs/static/js/config.js</code> after deploying the backend on Render.
-      See <code>DEPLOY_GITHUB.md</code> in the repository.
+      API offline. Ensure Render is running (see <code>static/js/config.js</code>).
     </section>
 
     <main class="layout">
@@ -35,8 +34,8 @@
         <div id="dropzone" class="dropzone" tabindex="0">
           <input id="fileInput" type="file" accept="image/*" hidden>
           <div class="dropzone-content">
-            <div class="dropzone-icon">📷</div>
-            <p><strong>Drag & drop</strong> an image here</p>
+            <div class="dropzone-icon">&#128247;</div>
+            <p><strong>Drag &amp; drop</strong> an image here</p>
             <p class="muted">or click to browse</p>
           </div>
           <img id="previewImage" class="preview-image hidden" alt="Uploaded preview">
@@ -44,10 +43,21 @@
 
         <label class="checkbox-row">
           <input id="faceDetection" type="checkbox" checked>
-          Auto-detect face (recommended)
+          Auto-detect face (required for reliable results)
         </label>
 
-        <button id="predictBtn" class="btn primary">Run full analysis</button>
+        <label class="checkbox-row">
+          <input id="accuracyMode" type="checkbox" checked>
+          High-accuracy mode (test-time augmentation &mdash; slightly slower)
+        </label>
+
+        <button id="predictBtn" class="btn primary" disabled>
+          Run full analysis
+        </button>
+        <button id="downloadPdfBtn" class="btn secondary hidden" type="button">
+          Download PDF report
+        </button>
+        <p id="timingText" class="muted hidden"></p>
         <p id="errorMsg" class="error hidden"></p>
       </section>
 
@@ -59,16 +69,17 @@
 
         <div id="resultsContent" class="results-content hidden">
           <div class="prediction-card">
-            <div id="predictionEmoji" class="prediction-emoji">😐</div>
+            <div id="predictionEmoji" class="prediction-emoji">&#128528;</div>
             <div>
               <p class="label">Predicted emotion</p>
               <h3 id="predictionText">Neutral</h3>
               <p id="confidenceText" class="confidence">0% confidence</p>
             </div>
-            <div id="certaintyBadge" class="certainty-badge">—</div>
+            <div id="certaintyBadge" class="certainty-badge">&mdash;</div>
           </div>
 
           <p id="faceNotice" class="face-notice hidden"></p>
+          <p id="reliabilityBanner" class="reliability-banner hidden"></p>
           <p id="interpretationText" class="interpretation"></p>
 
           <div class="metrics-grid" id="metricsGrid"></div>
@@ -88,8 +99,8 @@
       </div>
 
       <div class="panel chart-panel">
-        <h3>Grad-CAM — where the model looks</h3>
-        <p class="hint">Red/yellow regions had the strongest influence on the predicted emotion.</p>
+        <h3>Grad-CAM &mdash; where the model looks</h3>
+        <p class="hint">Red/yellow regions had the strongest influence on the predicted emotion. The model typically focuses on eyes, brows, and mouth.</p>
         <img id="gradcamPanel" class="chart-image wide" alt="Grad-CAM analysis panel">
       </div>
 
@@ -121,7 +132,7 @@
           </figure>
           <figure>
             <img id="preprocessedImage" alt="Preprocessed input">
-            <figcaption>Model input (48×48)</figcaption>
+            <figcaption>Model input (48&times;48)</figcaption>
           </figure>
           <figure>
             <img id="heatmapImage" alt="Raw heatmap">
@@ -141,14 +152,14 @@
     </section>
 
     <footer class="footer">
-      <span>Lokesh Chamakuri · ML Project · FER2013</span>
+      <span>Lokesh Chamakuri &middot; ML Project &middot; FER2013</span>
       <a href="https://github.com/Lokesh-UE/Phase-III" target="_blank" rel="noopener">GitHub</a>
     </footer>
   </div>
 
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="spinner"></div>
-    <p>Running analysis — prediction, charts & Grad-CAM…</p>
+    <p>Running analysis &mdash; prediction, charts &amp; Grad-CAM&hellip;</p>
   </div>
 
   <script src="static/js/config.js"></script>
