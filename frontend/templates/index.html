@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facial Expression Recognition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <span class="brand-icon">🎭</span>
+        <div>
+          <h1>Facial Expression Recognition</h1>
+          <p>Custom CNN · FER2013 · Grad-CAM interpretability</p>
+        </div>
+      </div>
+      <div class="status-pill {% if model_ready %}ready{% else %}missing{% endif %}">
+        {% if model_ready %}Model ready{% else %}Model missing{% endif %}
+      </div>
+    </header>
+
+    {% if not model_ready %}
+    <section class="alert">
+      Place <code>CustomCNN_best.keras</code> in the <code>demo/</code> or <code>checkpoints/</code> folder, then restart the app.
+    </section>
+    {% endif %}
+
+    <main class="layout">
+      <section class="panel upload-panel">
+        <h2>Upload image</h2>
+        <p class="hint">Upload a face photo for full analysis: prediction, probability charts, and Grad-CAM heatmaps.</p>
+
+        <div id="dropzone" class="dropzone" tabindex="0">
+          <input id="fileInput" type="file" accept="image/*" hidden>
+          <div class="dropzone-content">
+            <div class="dropzone-icon">📷</div>
+            <p><strong>Drag & drop</strong> an image here</p>
+            <p class="muted">or click to browse</p>
+          </div>
+          <img id="previewImage" class="preview-image hidden" alt="Uploaded preview">
+        </div>
+
+        <label class="checkbox-row">
+          <input id="faceDetection" type="checkbox" checked>
+          Auto-detect face (recommended)
+        </label>
+
+        <button id="predictBtn" class="btn primary" {% if not model_ready %}disabled{% endif %}>
+          Run full analysis
+        </button>
+        <p id="errorMsg" class="error hidden"></p>
+      </section>
+
+      <section class="panel results-panel">
+        <h2>Quick result</h2>
+        <div id="emptyState" class="empty-state">
+          <p>Upload an image and click <strong>Run full analysis</strong> to see predictions, charts, and Grad-CAM.</p>
+        </div>
+
+        <div id="resultsContent" class="results-content hidden">
+          <div class="prediction-card">
+            <div id="predictionEmoji" class="prediction-emoji">😐</div>
+            <div>
+              <p class="label">Predicted emotion</p>
+              <h3 id="predictionText">Neutral</h3>
+              <p id="confidenceText" class="confidence">0% confidence</p>
+            </div>
+            <div id="certaintyBadge" class="certainty-badge">—</div>
+          </div>
+
+          <p id="faceNotice" class="face-notice hidden"></p>
+          <p id="interpretationText" class="interpretation"></p>
+
+          <div class="metrics-grid" id="metricsGrid"></div>
+
+          <div class="scores">
+            <h3>Live probability bars</h3>
+            <div id="scoreBars" class="score-bars"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <section id="analysisSection" class="analysis-section hidden">
+      <div class="section-header">
+        <h2>Detailed analysis</h2>
+        <p>Model interpretability and probability visualizations</p>
+      </div>
+
+      <div class="panel chart-panel">
+        <h3>Grad-CAM — where the model looks</h3>
+        <p class="hint">Red/yellow regions had the strongest influence on the predicted emotion. The model typically focuses on eyes, brows, and mouth.</p>
+        <img id="gradcamPanel" class="chart-image wide" alt="Grad-CAM analysis panel">
+      </div>
+
+      <div class="chart-grid">
+        <div class="panel chart-panel">
+          <h3>Probability distribution</h3>
+          <img id="probabilityChart" class="chart-image" alt="Probability bar chart">
+        </div>
+        <div class="panel chart-panel">
+          <h3>Emotion radar profile</h3>
+          <img id="radarChart" class="chart-image" alt="Radar chart">
+        </div>
+        <div class="panel chart-panel">
+          <h3>Top emotion share</h3>
+          <img id="donutChart" class="chart-image" alt="Donut chart">
+        </div>
+        <div class="panel chart-panel">
+          <h3>Confidence gauge</h3>
+          <img id="confidenceGauge" class="chart-image" alt="Confidence gauge">
+        </div>
+      </div>
+
+      <div class="panel chart-panel">
+        <h3>Visual pipeline</h3>
+        <div class="pipeline-grid">
+          <figure>
+            <img id="annotatedImage" alt="Annotated upload">
+            <figcaption>Detected face</figcaption>
+          </figure>
+          <figure>
+            <img id="preprocessedImage" alt="Preprocessed input">
+            <figcaption>Model input (48×48)</figcaption>
+          </figure>
+          <figure>
+            <img id="heatmapImage" alt="Raw heatmap">
+            <figcaption>Grad-CAM heatmap</figcaption>
+          </figure>
+          <figure>
+            <img id="gradcamImage" alt="Grad-CAM overlay">
+            <figcaption>Overlay on face</figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <div class="panel chart-panel">
+        <h3>Top 3 predictions</h3>
+        <div id="top3Cards" class="top3-grid"></div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Lokesh Chamakuri · ML Project · FER2013</span>
+      <a href="https://github.com/Lokesh-UE/Phase-2---Facial-Expressions-Recognition" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+  </div>
+
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="spinner"></div>
+    <p>Running analysis — prediction, charts & Grad-CAM…</p>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

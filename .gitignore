@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+venv/
+.env
+checkpoints/
+fer2013/
+.Desktop/

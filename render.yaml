@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: fer-phase-iii
+    runtime: python
+    plan: free
+    buildCommand: pip install -r frontend/requirements.txt
+    startCommand: cd frontend && python app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
