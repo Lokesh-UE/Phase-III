@@ -10,7 +10,7 @@ from PIL import Image, UnidentifiedImageError
 from inference import find_model_path, load_model, predict_emotion
 from pdf_report import generate_pdf_report
 
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB
 

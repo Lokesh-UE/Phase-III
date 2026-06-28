@@ -86,7 +86,8 @@ def load_model():
             "Trained model not found. Place CustomCNN_best.keras in demo/ or checkpoints/."
         )
 
-    _model = keras.models.load_model(str(model_path))
+    # Model saved with Keras 3 (.keras) — requires TensorFlow >= 2.16
+    _model = keras.models.load_model(str(model_path), compile=False)
     return _model
 
 
