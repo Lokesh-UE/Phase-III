@@ -1,0 +1,6 @@
+#!/bin/sh
+# Reject commits that still contain unwanted co-author trailers.
+if grep -qiE 'Co-authored-by:.*cursoragent|iqearnersteam@gmail.com' "$1"; then
+  echo "Blocked: remove Co-authored-by Cursor / iqearners from commit message." >&2
+  exit 1
+fi

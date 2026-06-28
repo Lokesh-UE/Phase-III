@@ -1,0 +1,13 @@
+---
+description: Git commit author and message rules for this project
+alwaysApply: true
+---
+
+# Git commits
+
+When creating git commits for this repository:
+
+- **Author**: `Lokesh-UE <lokesh.chamakuri@ue-germany.de>` only
+- **Never** add `Co-authored-by: Cursor <cursoragent@cursor.com>` or any Cursor/agent trailer
+- **Never** use `iqearners`, `iqearnersteam@gmail.com`, or `cursoragent` as author or co-author
+- Use plain commit messages with no co-author lines unless the user explicitly requests a co-author
