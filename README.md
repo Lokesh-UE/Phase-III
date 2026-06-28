@@ -20,8 +20,7 @@ Upload a face image to predict one of **7 emotions** with **Grad-CAM** and proba
 
 | Platform | URL |
 |----------|-----|
-| **This Space** | https://huggingface.co/spaces/Lokesh-UE/Phase-III |
-| **GitHub Pages** | https://lokesh-ue.github.io/Phase-III/ |
+| **GitHub Pages** | (https://phase-iii.onrender.com/) |
 
 ## Local run
 
